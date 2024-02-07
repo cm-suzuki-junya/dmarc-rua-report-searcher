@@ -1,44 +1,116 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: >
-  dmarc-rua-report-searcher
+# Description: >
+#   dmarc-rua-report-searcher
+Parameters:
+  MyDomain:
+    Type: String
+  MailUser:
+    Type: String
 
-  Sample SAM Template for dmarc-rua-report-searcher
 
 # More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
-    Timeout: 3
-
-    # You can add LoggingConfig parameters such as the Logformat, Log Group, and SystemLogLevel or ApplicationLogLevel. Learn more here https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-function.html#sam-function-loggingconfig.
+    Timeout: 60
     LoggingConfig:
       LogFormat: JSON
 Resources:
-  HelloWorldFunction:
+  RuaConverterFunction:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
       CodeUri: hello_world/
       Handler: app.lambda_handler
       Runtime: python3.12
       Architectures:
-      - x86_64
+        - arm64
       Events:
-        HelloWorld:
-          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+        BucketMailConverter:
+          Type: S3
           Properties:
-            Path: /hello
-            Method: get
-
-Outputs:
-  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
-  # Find out more about other implicit resources you can reference within SAM
-  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
-  HelloWorldApi:
-    Description: API Gateway endpoint URL for Prod stage for Hello World function
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello/"
-  HelloWorldFunction:
-    Description: Hello World Lambda Function ARN
-    Value: !GetAtt HelloWorldFunction.Arn
-  HelloWorldFunctionIamRole:
-    Description: Implicit IAM Role created for Hello World function
-    Value: !GetAtt HelloWorldFunctionRole.Arn
+            Bucket: !Ref MailBucket
+            Events: s3:ObjectCreated:Put
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: !Sub source/*
+  # ----------------------------------
+  # ---- Amazon SES
+  # ----------------------------------
+  RuleSet:
+    Type: AWS::SES::ReceiptRuleSet
+    Properties: 
+      RuleSetName: !Sub ${MyDomain}-rua-receiver-ruleset
+  RuleDetail:
+    Type: AWS::SES::ReceiptRule
+    Properties: 
+      RuleSetName: !Ref RuleSet
+      Rule: 
+        Name: !Sub ${MailUser}_${MyDomain}
+        Recipients: 
+          - !Sub ${MailUser}@${MyDomain}
+        Enabled: True
+        TlsPolicy: Require
+        ScanEnabled: True
+        Actions:
+          - S3Action:
+              BucketName: !Ref MailBucket
+              ObjectKeyPrefix: !Sub source/${MailUser}
+    DependsOn:
+      #　バケットポリシー生成前にReceiptRuleを作成が発生するとテストファイルが設置されずに落ちる為
+      - MailBucketPolicy
+  # ----------------------------------
+  # ---- Amazon S3
+  # ----------------------------------
+  MailBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${MyDomain}-mail-stocker
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: True
+            ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+  MailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MailBucket
+      PolicyDocument: 
+        Version: 2012-10-17
+        Statement: 
+          - Sid: AllowPutFromSES
+            Effect: Allow
+            Principal: 
+              Service: ses.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub arn:aws:s3:::${MailBucket}/source/*
+            Condition: 
+              StringEquals: 
+                aws:Referer: !Ref AWS::AccountId
+          - Sid: AllowGetMailSrouceFromLambda
+            Effect: Allow
+            Principal: 
+              Service: lambda.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub arn:aws:s3:::${MailBucket}/source/*
+            Condition: 
+              StringEquals: 
+                aws:Referer: !Ref AWS::AccountId
+          - Sid: AlloPutConvertedMailFromLambda
+            Effect: Allow
+            Principal: 
+              Service: lambda.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub arn:aws:s3:::${MailBucket}/output/*
+            Condition: 
+              StringEquals: 
+                aws:Referer: !Ref AWS::AccountId
