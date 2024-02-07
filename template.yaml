@@ -13,13 +13,11 @@ Parameters:
 Globals:
   Function:
     Timeout: 60
-    LoggingConfig:
-      LogFormat: JSON
 Resources:
   RuaConverterFunction:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
-      CodeUri: hello_world/
+      CodeUri: report_converter/
       Handler: app.lambda_handler
       Runtime: python3.12
       Architectures:
@@ -34,7 +32,16 @@ Resources:
               S3Key:
                 Rules:
                   - Name: prefix
-                    Value: !Sub source/*
+                    Value: !Sub source/
+      Policies:
+        - Version: '2012-10-17' 
+          Statement:
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub arn:aws:s3:::${MyDomain}-mail-stocker/source/*
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub arn:aws:s3:::${MyDomain}-mail-stocker/output/*
   # ----------------------------------
   # ---- Amazon SES
   # ----------------------------------
@@ -57,9 +64,6 @@ Resources:
           - S3Action:
               BucketName: !Ref MailBucket
               ObjectKeyPrefix: !Sub source/${MailUser}
-    DependsOn:
-      #　バケットポリシー生成前にReceiptRuleを作成が発生するとテストファイルが設置されずに落ちる為
-      - MailBucketPolicy
   # ----------------------------------
   # ---- Amazon S3
   # ----------------------------------
@@ -93,24 +97,6 @@ Resources:
               Service: ses.amazonaws.com
             Action: s3:PutObject
             Resource: !Sub arn:aws:s3:::${MailBucket}/source/*
-            Condition: 
-              StringEquals: 
-                aws:Referer: !Ref AWS::AccountId
-          - Sid: AllowGetMailSrouceFromLambda
-            Effect: Allow
-            Principal: 
-              Service: lambda.amazonaws.com
-            Action: s3:GetObject
-            Resource: !Sub arn:aws:s3:::${MailBucket}/source/*
-            Condition: 
-              StringEquals: 
-                aws:Referer: !Ref AWS::AccountId
-          - Sid: AlloPutConvertedMailFromLambda
-            Effect: Allow
-            Principal: 
-              Service: lambda.amazonaws.com
-            Action: s3:GetObject
-            Resource: !Sub arn:aws:s3:::${MailBucket}/output/*
             Condition: 
               StringEquals: 
                 aws:Referer: !Ref AWS::AccountId
