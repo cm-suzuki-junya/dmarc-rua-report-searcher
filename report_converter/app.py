@@ -1,4 +1,4 @@
-import email, io, json
+import email, io, json, base64, zipfile
 import boto3
 import xmltodict
 
@@ -8,20 +8,23 @@ from dmarc_reports.exceptions import BadAggregateReport
 s3 = boto3.client('s3')
 
 def lambda_handler(event, context):
-    print(event)
     output_prefix = "output"
 
     bucket = event['Records'][0]['s3']['bucket']['name']
     key = event['Records'][0]['s3']['object']['key']
     
     resp = s3.get_object(Bucket=bucket, Key=key)
+
     eml_file = resp['Body']
     mail = email.message_from_bytes(eml_file.read())
+    
+    report = get_report(mail)
 
+    print(report)
     # AggregateReportの機能ではなくinitによるバリデーションを期待している
     # TODO: 良き感じに例外処理を入れる
     try:
-        AggregateReport(io.StringIO(mail.get_payload()))
+        AggregateReport(io.StringIO(report))
     except BadAggregateReport as error:
         print("This report is invalid format")
         return {
@@ -29,9 +32,8 @@ def lambda_handler(event, context):
             "Body": ""
         }
     
-    json_mailbody = xmltodict.parse(mail.get_payload())
+    json_mailbody = xmltodict.parse(report)
 
-    print(type(json_mailbody['feedback']['record']))
     # Convert 'Record' to list if dict
     if type(json_mailbody['feedback']['record']) is not list:
         json_mailbody['feedback']['record'] = [json_mailbody['feedback']['record']]
@@ -47,3 +49,21 @@ def lambda_handler(event, context):
         "statusCode": 200,
         "body": "",
     }
+
+def get_report(mail):
+    
+    '''
+        Emailオブジェクトからレポートを抽出する
+    '''
+    raw_payload = mail.get_payload()
+    if mail.get('Content-Transfer-Encoding') == 'base64':
+        payload = base64.b64decode(raw_payload)
+
+    match mail.get_content_type():
+        case 'application/zip':
+            z = zipfile.ZipFile(io.BytesIO(payload))
+            return z.read(z.namelist()[0]).decode('utf-8')
+        case 'application/gzip':
+            pass
+        case _:
+            return raw_payload
