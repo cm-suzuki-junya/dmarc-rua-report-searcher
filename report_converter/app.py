@@ -30,11 +30,18 @@ def lambda_handler(event, context):
         }
     
     json_mailbody = xmltodict.parse(mail.get_payload())
-    ## source key example: srouce/mailuser/mail-id.eml
-    ## output_key example: destination/mailuser/mail-id.eml.json
+
+    print(type(json_mailbody['feedback']['record']))
+    # Convert 'Record' to list if dict
+    if type(json_mailbody['feedback']['record']) is not list:
+        json_mailbody['feedback']['record'] = [json_mailbody['feedback']['record']]
+
+    # Parse filename
+    # source key example: srouce/mailuser/mail-id.eml
+    # output_key example: destination/mailuser/mail-id.eml.json
     output_key = "{}.json".format('/'.join([output_prefix] + key.split('/')[1:]))
 
-    s3.put_object(Bucket=bucket, Key=output_key,Body=json.dumps(json_mailbody))
+    s3.put_object(Bucket=bucket, Key=output_key,Body=json.dumps(json_mailbody, separators=(',', ':')))
     
     return {
         "statusCode": 200,
