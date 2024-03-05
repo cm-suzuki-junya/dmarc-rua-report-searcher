@@ -20,7 +20,6 @@ def lambda_handler(event, context):
     
     report = get_report(mail)
 
-    print(report)
     # AggregateReportの機能ではなくinitによるバリデーションを期待している
     # TODO: 良き感じに例外処理を入れる
     try:
@@ -29,14 +28,11 @@ def lambda_handler(event, context):
         print("This report is invalid format")
         return {
             "StatsuCode": 200,
-            "Body": ""
+            "Body": "Invalid format report"
         }
     
     json_mailbody = xmltodict.parse(report)
-
-    # Convert 'Record' to list if dict
-    if type(json_mailbody['feedback']['record']) is not list:
-        json_mailbody['feedback']['record'] = [json_mailbody['feedback']['record']]
+    shaped_dmarc_json(json_mailbody)
 
     # Parse filename
     # source key example: srouce/mailuser/mail-id.eml
@@ -67,3 +63,17 @@ def get_report(mail):
             pass
         case _:
             return raw_payload
+
+def shaped_dmarc_json(data):
+    '''
+        受け取ったJSON形式のDMARCレポートを整形する
+    '''
+    # Convert 'Record' to list if dict
+    if type(data['feedback']['record']) is not list:
+        data['feedback']['record'] = [data['feedback']['record']]
+
+    # Convert 'dkim' to list if dict
+    for i,d in enumerate(data['feedback']['record']):
+        if 'auth_results' in d:
+            if 'dkim' in d['auth_results'] and type(d['auth_results']['dkim']) is not list:
+                data['feedback']['record'][i]['auth_results']['dkim'] = [data['feedback']['record'][i]['auth_results']['dkim']]
